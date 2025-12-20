@@ -15,7 +15,9 @@ import { healthRouter } from './routes/health.js';
 import { authRouter } from './routes/auth.js';
 import { orgRouter } from './routes/orgs.js';
 import { projectRouter } from './routes/projects.js';
+import { boardRouter } from './routes/boards.js';
 import { taskRouter } from './routes/tasks.js';
+import { auditRouter } from './routes/audit.js';
 
 export function createServer() {
     const app = express();
@@ -45,7 +47,9 @@ export function createServer() {
     app.use('/api/auth', authRouter);
     app.use('/api/orgs', orgRouter);
     app.use('/api/projects', projectRouter);
+    app.use('/api', boardRouter);
     app.use('/api/tasks', taskRouter);
+    app.use('/api/audit', auditRouter);
 
     app.use(notFoundHandler());
     app.use(errorHandler());
