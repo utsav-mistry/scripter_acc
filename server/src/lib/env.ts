@@ -1,16 +1,56 @@
-import { z } from 'zod';
+import createHttpError from './httpError.js';
 
-const schema = z.object({
-    NODE_ENV: z.enum(['development', 'test', 'production']).default('development'),
-    PORT: z.coerce.number().int().min(1).max(65535).default(8080),
-    MONGO_URI: z.string().min(1),
-    JWT_ACCESS_SECRET: z.string().min(20),
-    JWT_REFRESH_SECRET: z.string().min(20),
-    CORS_ORIGIN: z.string().min(1).default('http://localhost:5173'),
-    TRUST_PROXY: z.coerce.boolean().default(false),
-    MORGAN_FORMAT: z.string().default('tiny'),
-    RATE_LIMIT_WINDOW_MS: z.coerce.number().int().min(1000).default(60_000),
-    RATE_LIMIT_MAX: z.coerce.number().int().min(1).default(240)
-});
+function required(name: string): string {
+    const v = process.env[name];
+    if (!v) throw createHttpError(500, 'missing_env', `Missing env var ${name}`);
+    return v;
+}
 
-export const env = schema.parse(process.env);
+function optional(name: string, def: string): string {
+    const v = process.env[name];
+    return v && v.length ? v : def;
+}
+
+function parseIntEnv(name: string, def: number, min?: number, max?: number): number {
+    const raw = process.env[name];
+    const n = raw ? Number(raw) : def;
+    if (!Number.isFinite(n) || !Number.isInteger(n)) throw createHttpError(500, 'invalid_env', `Invalid env var ${name}`);
+    if (min !== undefined && n < min) throw createHttpError(500, 'invalid_env', `Invalid env var ${name}`);
+    if (max !== undefined && n > max) throw createHttpError(500, 'invalid_env', `Invalid env var ${name}`);
+    return n;
+}
+
+function parseBoolEnv(name: string, def: boolean): boolean {
+    const raw = process.env[name];
+    if (raw === undefined) return def;
+    const v = raw.trim().toLowerCase();
+    if (v === 'true' || v === '1' || v === 'yes') return true;
+    if (v === 'false' || v === '0' || v === 'no') return false;
+    throw createHttpError(500, 'invalid_env', `Invalid env var ${name}`);
+}
+
+function requireMinLen(name: string, minLen: number): string {
+    const v = required(name);
+    if (v.length < minLen) throw createHttpError(500, 'invalid_env', `Invalid env var ${name}`);
+    return v;
+}
+
+const nodeEnvRaw = optional('NODE_ENV', 'development');
+const NODE_ENV = (['development', 'test', 'production'] as const).includes(nodeEnvRaw as any)
+    ? (nodeEnvRaw as 'development' | 'test' | 'production')
+    : 'development';
+
+const MORGAN_FORMAT = optional('MORGAN_FORMAT', 'tiny');
+
+export const env = {
+    NODE_ENV,
+    PORT: parseIntEnv('PORT', 8080, 1, 65535),
+    MONGO_URI: required('MONGO_URI'),
+    JWT_ACCESS_SECRET: requireMinLen('JWT_ACCESS_SECRET', 20),
+    JWT_REFRESH_SECRET: requireMinLen('JWT_REFRESH_SECRET', 20),
+    CORS_ORIGIN: optional('CORS_ORIGIN', 'http://localhost:5173'),
+    TRUST_PROXY: parseBoolEnv('TRUST_PROXY', false),
+    MORGAN_FORMAT,
+    RATE_LIMIT_WINDOW_MS: parseIntEnv('RATE_LIMIT_WINDOW_MS', 60_000, 1000),
+    RATE_LIMIT_MAX: parseIntEnv('RATE_LIMIT_MAX', 240, 1)
+};

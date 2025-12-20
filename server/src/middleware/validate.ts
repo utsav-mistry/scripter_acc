@@ -1,12 +1,14 @@
 import type { RequestHandler } from 'express';
 import createHttpError from '../lib/httpError.js';
-import type { ZodSchema } from 'zod';
+import type { Validator } from '../lib/validate.js';
 
-export function validateBody<T>(schema: ZodSchema<T>): RequestHandler {
+export function validateBody<T>(validator: Validator<T>): RequestHandler {
     return (req, _res, next) => {
-        const parsed = schema.safeParse(req.body);
-        if (!parsed.success) return next(createHttpError(400, 'invalid_body'));
-        req.body = parsed.data;
+        try {
+            req.body = validator(req.body);
+        } catch (err) {
+            return next(err ?? createHttpError(400, 'invalid_body'));
+        }
         next();
     };
 }

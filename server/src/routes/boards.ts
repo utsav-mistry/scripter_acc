@@ -1,12 +1,12 @@
 import { Router } from 'express';
 import createHttpError from '../lib/httpError.js';
 import mongoose from 'mongoose';
-import { z } from 'zod';
 
 import { requireAuth } from '../middleware/auth.js';
 import { requireProjectRole } from '../middleware/projectAccess.js';
 import { idempotency } from '../middleware/idempotency.js';
 import { validateBody } from '../middleware/validate.js';
+import { optionalEnum, requireRecord, requireStringMinMax } from '../lib/validate.js';
 
 import { BoardModel } from '../schemas/board.js';
 import { ProjectModel } from '../schemas/project.js';
@@ -14,10 +14,14 @@ import { writeAudit } from '../lib/audit.js';
 
 export const boardRouter = Router();
 
-const createBoardBody = z.object({
-    name: z.string().min(2).max(80),
-    type: z.enum(['kanban', 'scrum', 'backlog']).optional()
-});
+type CreateBoardBody = { name: string; type?: 'kanban' | 'scrum' | 'backlog' };
+
+function parseCreateBoardBody(input: unknown): CreateBoardBody {
+    const o = requireRecord(input);
+    const name = requireStringMinMax(o.name, 2, 80);
+    const type = optionalEnum(o.type, ['kanban', 'scrum', 'backlog'] as const);
+    return { name, type };
+}
 
 boardRouter.use(requireAuth());
 
@@ -33,13 +37,13 @@ boardRouter.post(
     '/projects/:projectId/boards',
     requireProjectRole('contributor'),
     idempotency(),
-    validateBody(createBoardBody),
+    validateBody(parseCreateBoardBody),
     async (req, res) => {
         const project = await ProjectModel.findById(req.params.projectId);
         if (!project) throw createHttpError(404, 'project_not_found');
 
         const userId = new mongoose.Types.ObjectId(req.user!.sub);
-        const { name, type } = req.body as z.infer<typeof createBoardBody>;
+        const { name, type } = req.body as CreateBoardBody;
 
         const board = await BoardModel.create({
             orgId: project.orgId,

@@ -1,7 +1,6 @@
 import { Router } from 'express';
 import createHttpError from '../lib/httpError.js';
 import mongoose from 'mongoose';
-import { z } from 'zod';
 
 import { requireAuth } from '../middleware/auth.js';
 import { requireProjectRole } from '../middleware/projectAccess.js';
@@ -13,32 +12,54 @@ import { WorkspaceModel } from '../schemas/workspace.js';
 import { ProjectMemberModel } from '../schemas/projectMember.js';
 import { OrgMemberModel, type OrgRole } from '../schemas/orgMember.js';
 import { randomId } from '../lib/id.js';
+import {
+    optionalEnum,
+    optionalRegex,
+    optionalStringMinMax,
+    requireEnum,
+    requireRecord,
+    requireStringMinMax,
+    requireString
+} from '../lib/validate.js';
 
 export const projectRouter = Router();
 
-const createProjectBody = z.object({
-    orgId: z.string().min(1),
-    workspaceId: z.string().min(1),
-    name: z.string().min(2).max(120),
-    key: z
-        .string()
-        .min(2)
-        .max(12)
-        .regex(/^[A-Z][A-Z0-9]*$/)
-        .optional(),
-    description: z.string().max(2000).optional(),
-    visibility: z.enum(['private', 'org']).optional()
-});
+type CreateProjectBody = {
+    orgId: string;
+    workspaceId: string;
+    name: string;
+    key?: string;
+    description?: string;
+    visibility?: 'private' | 'org';
+};
 
-const addMemberBody = z.object({
-    userId: z.string().min(1),
-    role: z.enum(['owner', 'maintainer', 'contributor', 'viewer'])
-});
+type AddMemberBody = { userId: string; role: 'owner' | 'maintainer' | 'contributor' | 'viewer' };
 
-const listProjectsQuery = z.object({
-    orgId: z.string().min(1),
-    workspaceId: z.string().min(1)
-});
+function parseCreateProjectBody(input: unknown): CreateProjectBody {
+    const o = requireRecord(input);
+    const orgId = requireStringMinMax(o.orgId, 1, 200);
+    const workspaceId = requireStringMinMax(o.workspaceId, 1, 200);
+    const name = requireStringMinMax(o.name, 2, 120);
+    const key = optionalRegex(o.key, /^[A-Z][A-Z0-9]*$/, 'invalid_body');
+    const keyFinal = key ? optionalStringMinMax(key, 2, 12) : undefined;
+    const description = optionalStringMinMax(o.description, 0, 2000);
+    const visibility = optionalEnum(o.visibility, ['private', 'org'] as const);
+    return { orgId, workspaceId, name, key: keyFinal, description, visibility };
+}
+
+function parseAddMemberBody(input: unknown): AddMemberBody {
+    const o = requireRecord(input);
+    const userId = requireStringMinMax(o.userId, 1, 200);
+    const role = requireEnum(o.role, ['owner', 'maintainer', 'contributor', 'viewer'] as const);
+    return { userId, role };
+}
+
+function parseListProjectsQuery(q: any): { orgId: string; workspaceId: string } {
+    const orgId = requireString(q?.orgId, 'missing_orgId');
+    const workspaceId = requireString(q?.workspaceId, 'missing_workspaceId');
+    if (!orgId || !workspaceId) throw createHttpError(400, 'missing_orgId');
+    return { orgId, workspaceId };
+}
 
 function projectKeyFromName(name: string) {
     const cleaned = name
@@ -70,9 +91,7 @@ async function assertOrgRole(userId: mongoose.Types.ObjectId, orgId: string, min
 projectRouter.use(requireAuth());
 
 projectRouter.get('/', async (req, res) => {
-    const parsed = listProjectsQuery.safeParse(req.query);
-    if (!parsed.success) throw createHttpError(400, 'missing_orgId');
-    const { orgId, workspaceId } = parsed.data;
+    const { orgId, workspaceId } = parseListProjectsQuery(req.query);
 
     const userId = new mongoose.Types.ObjectId(req.user!.sub);
     await assertOrgRole(userId, orgId, 'viewer');
@@ -88,9 +107,8 @@ projectRouter.get('/', async (req, res) => {
     });
 });
 
-projectRouter.post('/', idempotency(), validateBody(createProjectBody), async (req, res) => {
-    const { orgId, workspaceId, name, description, visibility } = req.body as z.infer<typeof createProjectBody>;
-    const requestedKey = (req.body as any).key as string | undefined;
+projectRouter.post('/', idempotency(), validateBody(parseCreateProjectBody), async (req, res) => {
+    const { orgId, workspaceId, name, description, visibility, key: requestedKey } = req.body as CreateProjectBody;
     const keyBase = requestedKey ? requestedKey : projectKeyFromName(name);
     const key = keyBase.length >= 2 ? keyBase : `PRJ${randomId(3).toUpperCase()}`;
 
@@ -139,11 +157,11 @@ projectRouter.get('/:projectId/members', requireProjectRole('viewer'), async (re
     });
 });
 
-projectRouter.post('/:projectId/members', requireProjectRole('maintainer'), idempotency(), validateBody(addMemberBody), async (req, res) => {
+projectRouter.post('/:projectId/members', requireProjectRole('maintainer'), idempotency(), validateBody(parseAddMemberBody), async (req, res) => {
     const project = await ProjectModel.findById(req.params.projectId);
     if (!project) throw createHttpError(404, 'project_not_found');
 
-    const { userId, role } = req.body as z.infer<typeof addMemberBody>;
+    const { userId, role } = req.body as AddMemberBody;
     const member = await ProjectMemberModel.create({
         orgId: project.orgId,
         projectId: project._id,
