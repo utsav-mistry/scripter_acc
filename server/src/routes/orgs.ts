@@ -1,7 +1,6 @@
 import { Router } from 'express';
 import createHttpError from 'http-errors';
 import mongoose from 'mongoose';
-import { nanoid } from 'nanoid';
 import { z } from 'zod';
 
 import { requireAuth } from '../middleware/auth.js';
@@ -11,6 +10,7 @@ import { OrgModel } from '../schemas/org.js';
 import { OrgMemberModel } from '../schemas/orgMember.js';
 import { WorkspaceModel } from '../schemas/workspace.js';
 import { requireOrgRole } from '../middleware/orgAccess.js';
+import { randomId } from '../lib/id.js';
 
 export const orgRouter = Router();
 
@@ -71,7 +71,7 @@ orgRouter.post('/', idempotency(), validateBody(createOrgBody), async (req, res)
     const { name, plan } = req.body as z.infer<typeof createOrgBody>;
     const requestedSlug = (req.body as any).slug as string | undefined;
     const slugBase = requestedSlug ? requestedSlug : slugify(name);
-    const slug = slugBase.length >= 2 ? slugBase : `org-${nanoid(8)}`;
+    const slug = slugBase.length >= 2 ? slugBase : `org-${randomId(4)}`;
 
     const userId = new mongoose.Types.ObjectId(req.user!.sub);
     const org = await OrgModel.create({ name, slug, plan: plan ?? 'free', createdByUserId: userId });
@@ -100,7 +100,7 @@ orgRouter.post('/:orgId/workspaces', requireOrgRole('member'), idempotency(), va
     const { name } = req.body as z.infer<typeof createWorkspaceBody>;
     const requestedKey = (req.body as any).key as string | undefined;
     const keyBase = requestedKey ? requestedKey : workspaceKeyFromName(name);
-    const key = keyBase.length >= 2 ? keyBase : `WS${nanoid(6).toUpperCase()}`;
+    const key = keyBase.length >= 2 ? keyBase : `WS${randomId(3).toUpperCase()}`;
     const userId = new mongoose.Types.ObjectId(req.user!.sub);
 
     const workspace = await WorkspaceModel.create({ orgId, name, key, createdByUserId: userId });

@@ -1,5 +1,4 @@
 import { Router } from 'express';
-import express from 'express';
 import createHttpError from 'http-errors';
 import mongoose from 'mongoose';
 import fs from 'node:fs/promises';
@@ -19,6 +18,7 @@ import { AttachmentModel } from '../schemas/attachment.js';
 import { writeAudit } from '../lib/audit.js';
 import { sha256Base64 } from '../lib/hash.js';
 import { ensureDir, taskAttachmentDir } from '../lib/storage.js';
+import { parseMultipartFormData } from '../lib/multipart.js';
 export const taskRouter = Router();
 taskRouter.use(requireAuth());
 const projectRoleWeight = {
@@ -355,18 +355,51 @@ taskRouter.get('/:taskId/attachments', async (req, res) => {
         nextCursor: null
     });
 });
-taskRouter.post('/:taskId/attachments', idempotency(), express.raw({ type: 'application/octet-stream', limit: '25mb' }), async (req, res) => {
+taskRouter.post('/:taskId/attachments', idempotency(), async (req, res) => {
     const task = await TaskModel.findById(req.params.taskId);
     if (!task)
         throw createHttpError(404, 'task_not_found');
     const userId = new mongoose.Types.ObjectId(req.user.sub);
     await assertProjectRole(userId, String(task.projectId), 'contributor');
-    const filename = req.header('x-filename');
+    const contentTypeHeader = req.header('content-type') ?? 'application/octet-stream';
+    let filename = null;
+    let contentType = 'application/octet-stream';
+    let buf = null;
+    const raw = await new Promise((resolve, reject) => {
+        const chunks = [];
+        let size = 0;
+        req.on('data', (chunk) => {
+            const b = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk);
+            size += b.length;
+            if (size > 25 * 1024 * 1024) {
+                reject(createHttpError(413, 'payload_too_large'));
+                req.destroy();
+                return;
+            }
+            chunks.push(b);
+        });
+        req.on('end', () => resolve(Buffer.concat(chunks)));
+        req.on('error', reject);
+    });
+    if (contentTypeHeader.toLowerCase().startsWith('multipart/form-data')) {
+        const parsed = parseMultipartFormData({ contentTypeHeader, body: raw, maxFiles: 1 });
+        const file = parsed.files.find((f) => f.fieldName === 'file') ?? parsed.files[0];
+        if (!file)
+            throw createHttpError(400, 'missing_file');
+        filename = file.filename;
+        contentType = file.contentType || 'application/octet-stream';
+        buf = file.data;
+    }
+    else {
+        filename = req.header('x-filename') ?? null;
+        if (!filename)
+            throw createHttpError(400, 'missing_x_filename');
+        contentType = contentTypeHeader;
+        buf = raw;
+    }
     if (!filename)
-        throw createHttpError(400, 'missing_x_filename');
-    const contentType = req.header('content-type') ?? 'application/octet-stream';
-    const buf = req.body;
-    if (!Buffer.isBuffer(buf) || buf.length === 0)
+        throw createHttpError(400, 'missing_filename');
+    if (!buf || buf.length === 0)
         throw createHttpError(400, 'empty_body');
     const sha = sha256Base64(buf.toString('base64'));
     const dir = taskAttachmentDir(String(task._id));
