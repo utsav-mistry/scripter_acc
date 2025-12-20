@@ -1,5 +1,4 @@
 import { useQuery } from '@tanstack/react-query';
-import { nanoid } from 'nanoid';
 
 import { listOrgs, createOrg } from '../api/orgs';
 import { useAuth } from '../state/auth/AuthContext';
@@ -9,6 +8,7 @@ import { OrgList } from '../components/orgs/OrgList';
 import { Card } from '../atoms/surface/Card';
 import { TextInput } from '../atoms/inputs/TextInput';
 import { ButtonPrimary } from '../atoms/buttons/ButtonPrimary';
+import { randomId } from '../lib/id';
 
 export function OrgsPage() {
     const { state } = useAuth();
@@ -20,7 +20,7 @@ export function OrgsPage() {
     });
 
     async function createQuick() {
-        await createOrg(accessToken, { name: `Org ${new Date().toISOString()}` }, nanoid());
+        await createOrg(accessToken, { name: `Org ${new Date().toISOString()}` }, randomId(12));
         await q.refetch();
     }
 
