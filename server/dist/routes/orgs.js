@@ -1,7 +1,6 @@
 import { Router } from 'express';
 import createHttpError from '../lib/httpError.js';
 import mongoose from 'mongoose';
-import { z } from 'zod';
 import { requireAuth } from '../middleware/auth.js';
 import { idempotency } from '../middleware/idempotency.js';
 import { validateBody } from '../middleware/validate.js';
@@ -10,26 +9,24 @@ import { OrgMemberModel } from '../schemas/orgMember.js';
 import { WorkspaceModel } from '../schemas/workspace.js';
 import { requireOrgRole } from '../middleware/orgAccess.js';
 import { randomId } from '../lib/id.js';
+import { optionalEnum, optionalRegex, optionalStringMinMax, requireRecord, requireStringMinMax } from '../lib/validate.js';
 export const orgRouter = Router();
-const createOrgBody = z.object({
-    name: z.string().min(2).max(80),
-    slug: z
-        .string()
-        .min(2)
-        .max(48)
-        .regex(/^[a-z0-9]+(?:-[a-z0-9]+)*$/)
-        .optional(),
-    plan: z.enum(['free', 'pro', 'enterprise']).optional()
-});
-const createWorkspaceBody = z.object({
-    name: z.string().min(2).max(80),
-    key: z
-        .string()
-        .min(2)
-        .max(12)
-        .regex(/^[A-Z][A-Z0-9]*$/)
-        .optional()
-});
+function parseCreateOrgBody(input) {
+    const o = requireRecord(input);
+    const name = requireStringMinMax(o.name, 2, 80);
+    const slug = optionalRegex(o.slug, /^[a-z0-9]+(?:-[a-z0-9]+)*$/, 'invalid_body');
+    const plan = optionalEnum(o.plan, ['free', 'pro', 'enterprise']);
+    // slug already regex-validated; also cap length
+    const slugFinal = slug ? optionalStringMinMax(slug, 2, 48) : undefined;
+    return { name, slug: slugFinal, plan };
+}
+function parseCreateWorkspaceBody(input) {
+    const o = requireRecord(input);
+    const name = requireStringMinMax(o.name, 2, 80);
+    const key = optionalRegex(o.key, /^[A-Z][A-Z0-9]*$/, 'invalid_body');
+    const keyFinal = key ? optionalStringMinMax(key, 2, 12) : undefined;
+    return { name, key: keyFinal };
+}
 function slugify(input) {
     return input
         .trim()
@@ -58,9 +55,8 @@ orgRouter.get('/', async (req, res) => {
         nextCursor: null
     });
 });
-orgRouter.post('/', idempotency(), validateBody(createOrgBody), async (req, res) => {
-    const { name, plan } = req.body;
-    const requestedSlug = req.body.slug;
+orgRouter.post('/', idempotency(), validateBody(parseCreateOrgBody), async (req, res) => {
+    const { name, plan, slug: requestedSlug } = req.body;
     const slugBase = requestedSlug ? requestedSlug : slugify(name);
     const slug = slugBase.length >= 2 ? slugBase : `org-${randomId(4)}`;
     const userId = new mongoose.Types.ObjectId(req.user.sub);
@@ -82,10 +78,9 @@ orgRouter.get('/:orgId/workspaces', requireOrgRole('viewer'), async (req, res) =
         nextCursor: null
     });
 });
-orgRouter.post('/:orgId/workspaces', requireOrgRole('member'), idempotency(), validateBody(createWorkspaceBody), async (req, res) => {
+orgRouter.post('/:orgId/workspaces', requireOrgRole('member'), idempotency(), validateBody(parseCreateWorkspaceBody), async (req, res) => {
     const orgId = new mongoose.Types.ObjectId(req.params.orgId);
-    const { name } = req.body;
-    const requestedKey = req.body.key;
+    const { name, key: requestedKey } = req.body;
     const keyBase = requestedKey ? requestedKey : workspaceKeyFromName(name);
     const key = keyBase.length >= 2 ? keyBase : `WS${randomId(3).toUpperCase()}`;
     const userId = new mongoose.Types.ObjectId(req.user.sub);

@@ -7,6 +7,7 @@ import compression from 'compression';
 import { env } from './lib/env.js';
 import { requestIdMiddleware } from './middleware/requestId.js';
 import { requestLogger } from './middleware/requestLogger.js';
+import { requestTimeout } from './middleware/timeout.js';
 import { notFoundHandler } from './middleware/notFound.js';
 import { errorHandler } from './middleware/errorHandler.js';
 import { globalRateLimiter } from './middleware/rateLimit.js';
@@ -18,6 +19,8 @@ import { projectRouter } from './routes/projects.js';
 import { boardRouter } from './routes/boards.js';
 import { taskRouter } from './routes/tasks.js';
 import { auditRouter } from './routes/audit.js';
+import { notificationsRouter } from './routes/notifications.js';
+import { metricsRouter } from './routes/metrics.js';
 
 export function createServer() {
     const app = express();
@@ -36,6 +39,7 @@ export function createServer() {
 
     app.use(requestIdMiddleware());
     app.use(requestLogger());
+    app.use(requestTimeout(30_000));
     app.use(globalRateLimiter());
 
     app.use(express.json({ limit: '2mb' }));
@@ -50,6 +54,8 @@ export function createServer() {
     app.use('/api', boardRouter);
     app.use('/api/tasks', taskRouter);
     app.use('/api/audit', auditRouter);
+    app.use('/api/notifications', notificationsRouter);
+    app.use('/metrics', metricsRouter);
 
     app.use(notFoundHandler());
     app.use(errorHandler());

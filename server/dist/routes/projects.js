@@ -1,7 +1,6 @@
 import { Router } from 'express';
 import createHttpError from '../lib/httpError.js';
 import mongoose from 'mongoose';
-import { z } from 'zod';
 import { requireAuth } from '../middleware/auth.js';
 import { requireProjectRole } from '../middleware/projectAccess.js';
 import { idempotency } from '../middleware/idempotency.js';
@@ -11,28 +10,32 @@ import { WorkspaceModel } from '../schemas/workspace.js';
 import { ProjectMemberModel } from '../schemas/projectMember.js';
 import { OrgMemberModel } from '../schemas/orgMember.js';
 import { randomId } from '../lib/id.js';
+import { optionalEnum, optionalRegex, optionalStringMinMax, requireEnum, requireRecord, requireStringMinMax, requireString } from '../lib/validate.js';
 export const projectRouter = Router();
-const createProjectBody = z.object({
-    orgId: z.string().min(1),
-    workspaceId: z.string().min(1),
-    name: z.string().min(2).max(120),
-    key: z
-        .string()
-        .min(2)
-        .max(12)
-        .regex(/^[A-Z][A-Z0-9]*$/)
-        .optional(),
-    description: z.string().max(2000).optional(),
-    visibility: z.enum(['private', 'org']).optional()
-});
-const addMemberBody = z.object({
-    userId: z.string().min(1),
-    role: z.enum(['owner', 'maintainer', 'contributor', 'viewer'])
-});
-const listProjectsQuery = z.object({
-    orgId: z.string().min(1),
-    workspaceId: z.string().min(1)
-});
+function parseCreateProjectBody(input) {
+    const o = requireRecord(input);
+    const orgId = requireStringMinMax(o.orgId, 1, 200);
+    const workspaceId = requireStringMinMax(o.workspaceId, 1, 200);
+    const name = requireStringMinMax(o.name, 2, 120);
+    const key = optionalRegex(o.key, /^[A-Z][A-Z0-9]*$/, 'invalid_body');
+    const keyFinal = key ? optionalStringMinMax(key, 2, 12) : undefined;
+    const description = optionalStringMinMax(o.description, 0, 2000);
+    const visibility = optionalEnum(o.visibility, ['private', 'org']);
+    return { orgId, workspaceId, name, key: keyFinal, description, visibility };
+}
+function parseAddMemberBody(input) {
+    const o = requireRecord(input);
+    const userId = requireStringMinMax(o.userId, 1, 200);
+    const role = requireEnum(o.role, ['owner', 'maintainer', 'contributor', 'viewer']);
+    return { userId, role };
+}
+function parseListProjectsQuery(q) {
+    const orgId = requireString(q?.orgId, 'missing_orgId');
+    const workspaceId = requireString(q?.workspaceId, 'missing_workspaceId');
+    if (!orgId || !workspaceId)
+        throw createHttpError(400, 'missing_orgId');
+    return { orgId, workspaceId };
+}
 function projectKeyFromName(name) {
     const cleaned = name
         .trim()
@@ -61,10 +64,7 @@ async function assertOrgRole(userId, orgId, minRole) {
 }
 projectRouter.use(requireAuth());
 projectRouter.get('/', async (req, res) => {
-    const parsed = listProjectsQuery.safeParse(req.query);
-    if (!parsed.success)
-        throw createHttpError(400, 'missing_orgId');
-    const { orgId, workspaceId } = parsed.data;
+    const { orgId, workspaceId } = parseListProjectsQuery(req.query);
     const userId = new mongoose.Types.ObjectId(req.user.sub);
     await assertOrgRole(userId, orgId, 'viewer');
     const items = await ProjectModel.find({
@@ -76,9 +76,8 @@ projectRouter.get('/', async (req, res) => {
         nextCursor: null
     });
 });
-projectRouter.post('/', idempotency(), validateBody(createProjectBody), async (req, res) => {
-    const { orgId, workspaceId, name, description, visibility } = req.body;
-    const requestedKey = req.body.key;
+projectRouter.post('/', idempotency(), validateBody(parseCreateProjectBody), async (req, res) => {
+    const { orgId, workspaceId, name, description, visibility, key: requestedKey } = req.body;
     const keyBase = requestedKey ? requestedKey : projectKeyFromName(name);
     const key = keyBase.length >= 2 ? keyBase : `PRJ${randomId(3).toUpperCase()}`;
     const userId = new mongoose.Types.ObjectId(req.user.sub);
@@ -121,7 +120,7 @@ projectRouter.get('/:projectId/members', requireProjectRole('viewer'), async (re
         nextCursor: null
     });
 });
-projectRouter.post('/:projectId/members', requireProjectRole('maintainer'), idempotency(), validateBody(addMemberBody), async (req, res) => {
+projectRouter.post('/:projectId/members', requireProjectRole('maintainer'), idempotency(), validateBody(parseAddMemberBody), async (req, res) => {
     const project = await ProjectModel.findById(req.params.projectId);
     if (!project)
         throw createHttpError(404, 'project_not_found');

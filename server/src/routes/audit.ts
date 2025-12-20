@@ -1,21 +1,23 @@
 import { Router } from 'express';
 import createHttpError from '../lib/httpError.js';
-import { z } from 'zod';
 import mongoose from 'mongoose';
 
 import { requireAuth } from '../middleware/auth.js';
 import { AuditLogModel } from '../schemas/auditLog.js';
 import { OrgMemberModel, type OrgRole } from '../schemas/orgMember.js';
 import { ProjectMemberModel, type ProjectRole } from '../schemas/projectMember.js';
+import { optionalCoerceInt } from '../lib/validate.js';
 
 export const auditRouter = Router();
 
-const querySchema = z.object({
-    orgId: z.string().optional(),
-    projectId: z.string().optional(),
-    limit: z.coerce.number().int().min(1).max(200).optional(),
-    cursor: z.string().optional()
-});
+function parseAuditQuery(q: any): { orgId?: string; projectId?: string; limit?: number; cursor?: string } {
+    const orgId = typeof q?.orgId === 'string' ? q.orgId : undefined;
+    const projectId = typeof q?.projectId === 'string' ? q.projectId : undefined;
+    const limit = optionalCoerceInt(q?.limit, 'invalid_query');
+    const cursor = typeof q?.cursor === 'string' ? q.cursor : undefined;
+    if (limit !== undefined && (limit < 1 || limit > 200)) throw createHttpError(400, 'invalid_query');
+    return { orgId, projectId, limit, cursor };
+}
 
 auditRouter.use(requireAuth());
 
@@ -43,10 +45,7 @@ async function assertProjectViewer(userId: mongoose.Types.ObjectId, projectId: s
 }
 
 auditRouter.get('/', async (req, res) => {
-    const parsed = querySchema.safeParse(req.query);
-    if (!parsed.success) throw createHttpError(400, 'invalid_query');
-
-    const { orgId, projectId, limit, cursor } = parsed.data;
+    const { orgId, projectId, limit, cursor } = parseAuditQuery(req.query);
     if (!orgId && !projectId) throw createHttpError(400, 'missing_scope');
 
     const userId = new mongoose.Types.ObjectId(req.user!.sub);

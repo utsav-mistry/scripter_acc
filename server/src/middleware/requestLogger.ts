@@ -1,4 +1,5 @@
 import type { RequestHandler } from 'express';
+import { incRequest } from '../lib/metrics.js';
 
 export function requestLogger(): RequestHandler {
     return (req, res, next) => {
@@ -6,6 +7,7 @@ export function requestLogger(): RequestHandler {
         res.on('finish', () => {
             const ms = Date.now() - start;
             const requestId = (req as any).requestId ?? '';
+            incRequest(res.statusCode);
             const msg = `[http] ${req.method} ${req.originalUrl} ${res.statusCode} ${ms}ms${requestId ? ` rid=${requestId}` : ''}`;
             // eslint-disable-next-line no-console
             console.log(msg);

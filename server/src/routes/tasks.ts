@@ -4,7 +4,6 @@ import createHttpError from '../lib/httpError.js';
 import mongoose from 'mongoose';
 import fs from 'node:fs/promises';
 import path from 'node:path';
-import { z } from 'zod';
 
 import { requireAuth } from '../middleware/auth.js';
 import { idempotency } from '../middleware/idempotency.js';
@@ -22,6 +21,19 @@ import { writeAudit } from '../lib/audit.js';
 import { sha256Base64 } from '../lib/hash.js';
 import { ensureDir, taskAttachmentDir } from '../lib/storage.js';
 import { parseMultipartFormData } from '../lib/multipart.js';
+import {
+    coerceInt,
+    optionalCoerceInt,
+    optionalEnum,
+    optionalIsoDate,
+    optionalNullableIsoDate,
+    optionalNullableString,
+    optionalStringMinMax,
+    requireEnum,
+    requireRecord,
+    requireString,
+    requireStringMinMax
+} from '../lib/validate.js';
 
 export const taskRouter = Router();
 
@@ -45,48 +57,97 @@ async function assertProjectRole(userId: mongoose.Types.ObjectId, projectId: str
     return member;
 }
 
-const listTasksQuery = z.object({
-    projectId: z.string().min(1),
-    boardId: z.string().optional(),
-    status: z.enum(['todo', 'in_progress', 'blocked', 'done', 'canceled']).optional(),
-    assigneeUserId: z.string().optional(),
-    limit: z.coerce.number().int().min(1).max(200).optional(),
-    cursor: z.string().optional()
-});
+type ListTasksQuery = {
+    projectId: string;
+    boardId?: string;
+    status?: 'todo' | 'in_progress' | 'blocked' | 'done' | 'canceled';
+    assigneeUserId?: string;
+    limit?: number;
+    cursor?: string;
+};
 
-const createTaskBody = z.object({
-    projectId: z.string().min(1),
-    boardId: z.string().min(1),
-    title: z.string().min(2).max(200),
-    description: z.string().max(10_000).optional(),
-    status: z.enum(['todo', 'in_progress', 'blocked', 'done', 'canceled']).optional(),
-    priority: z.union([z.literal(1), z.literal(2), z.literal(3), z.literal(4)]).optional(),
-    assigneeUserId: z.string().optional(),
-    dueAt: z.string().datetime().optional()
-});
+type CreateTaskBody = {
+    projectId: string;
+    boardId: string;
+    title: string;
+    description?: string;
+    status?: 'todo' | 'in_progress' | 'blocked' | 'done' | 'canceled';
+    priority?: 1 | 2 | 3 | 4;
+    assigneeUserId?: string;
+    dueAt?: Date;
+};
 
-const updateTaskBody = z.object({
-    title: z.string().min(2).max(200).optional(),
-    description: z.string().max(10_000).optional(),
-    status: z.enum(['todo', 'in_progress', 'blocked', 'done', 'canceled']).optional(),
-    priority: z.union([z.literal(1), z.literal(2), z.literal(3), z.literal(4)]).optional(),
-    assigneeUserId: z.string().nullable().optional(),
-    dueAt: z.string().datetime().nullable().optional(),
-    boardId: z.string().optional()
-});
+type UpdateTaskBody = {
+    title?: string;
+    description?: string;
+    status?: 'todo' | 'in_progress' | 'blocked' | 'done' | 'canceled';
+    priority?: 1 | 2 | 3 | 4;
+    assigneeUserId?: string | null;
+    dueAt?: Date | null;
+    boardId?: string;
+};
 
-const createCommentBody = z.object({
-    body: z.string().min(1).max(10_000)
-});
+type CreateCommentBody = { body: string };
+type CreateLabelBody = { name: string; color: string };
+type AttachLabelBody = { labelId: string };
 
-const createLabelBody = z.object({
-    name: z.string().min(1).max(50),
-    color: z.string().min(3).max(32)
-});
+function parseListTasksQuery(q: any): ListTasksQuery {
+    const projectId = requireString(q?.projectId, 'invalid_query');
+    const boardId = typeof q?.boardId === 'string' ? q.boardId : undefined;
+    const status = optionalEnum(q?.status, ['todo', 'in_progress', 'blocked', 'done', 'canceled'] as const, 'invalid_query');
+    const assigneeUserId = typeof q?.assigneeUserId === 'string' ? q.assigneeUserId : undefined;
+    const limit = optionalCoerceInt(q?.limit, 'invalid_query');
+    const cursor = typeof q?.cursor === 'string' ? q.cursor : undefined;
+    if (!projectId) throw createHttpError(400, 'invalid_query');
+    if (limit !== undefined && (limit < 1 || limit > 200)) throw createHttpError(400, 'invalid_query');
+    return { projectId, boardId, status, assigneeUserId, limit, cursor };
+}
 
-const attachLabelBody = z.object({
-    labelId: z.string().min(1)
-});
+function parseCreateTaskBody(input: unknown): CreateTaskBody {
+    const o = requireRecord(input);
+    const projectId = requireStringMinMax(o.projectId, 1, 200);
+    const boardId = requireStringMinMax(o.boardId, 1, 200);
+    const title = requireStringMinMax(o.title, 2, 200);
+    const description = optionalStringMinMax(o.description, 0, 10_000);
+    const status = optionalEnum(o.status, ['todo', 'in_progress', 'blocked', 'done', 'canceled'] as const);
+    const priority = o.priority === undefined ? undefined : (coerceInt(o.priority, 'invalid_body') as any);
+    if (priority !== undefined && ![1, 2, 3, 4].includes(priority)) throw createHttpError(400, 'invalid_body');
+    const assigneeUserId = typeof o.assigneeUserId === 'string' ? o.assigneeUserId : undefined;
+    const dueAt = optionalIsoDate(o.dueAt);
+    return { projectId, boardId, title, description, status, priority, assigneeUserId, dueAt };
+}
+
+function parseUpdateTaskBody(input: unknown): UpdateTaskBody {
+    const o = requireRecord(input);
+    const title = o.title === undefined ? undefined : requireStringMinMax(o.title, 2, 200);
+    const description = o.description === undefined ? undefined : optionalStringMinMax(o.description, 0, 10_000);
+    const status = optionalEnum(o.status, ['todo', 'in_progress', 'blocked', 'done', 'canceled'] as const);
+    const priority = o.priority === undefined ? undefined : (coerceInt(o.priority, 'invalid_body') as any);
+    if (priority !== undefined && ![1, 2, 3, 4].includes(priority)) throw createHttpError(400, 'invalid_body');
+    const assigneeUserId = optionalNullableString(o.assigneeUserId);
+    const dueAt = optionalNullableIsoDate(o.dueAt);
+    const boardId = typeof o.boardId === 'string' ? o.boardId : undefined;
+    return { title, description, status, priority, assigneeUserId, dueAt, boardId };
+}
+
+function parseCreateCommentBody(input: unknown): CreateCommentBody {
+    const o = requireRecord(input);
+    const body = requireStringMinMax(o.body, 1, 10_000);
+    return { body };
+}
+
+function parseCreateLabelBody(input: unknown): CreateLabelBody {
+    const o = requireRecord(input);
+    const name = requireStringMinMax(o.name, 1, 50);
+    const color = requireStringMinMax(o.color, 3, 32);
+    return { name, color };
+}
+
+function parseAttachLabelBody(input: unknown): AttachLabelBody {
+    const o = requireRecord(input);
+    const labelId = requireStringMinMax(o.labelId, 1, 200);
+    return { labelId };
+}
 
 function parseCursor(cursor: string) {
     const [msStr, idStr] = cursor.split('_');
@@ -96,9 +157,7 @@ function parseCursor(cursor: string) {
 }
 
 taskRouter.get('/', async (req, res) => {
-    const parsed = listTasksQuery.safeParse(req.query);
-    if (!parsed.success) throw createHttpError(400, 'invalid_query');
-    const { projectId, boardId, status, assigneeUserId, limit, cursor } = parsed.data;
+    const { projectId, boardId, status, assigneeUserId, limit, cursor } = parseListTasksQuery(req.query);
 
     const userId = new mongoose.Types.ObjectId(req.user!.sub);
     await assertProjectRole(userId, projectId, 'viewer');
@@ -138,8 +197,8 @@ taskRouter.get('/', async (req, res) => {
     });
 });
 
-taskRouter.post('/', idempotency(), validateBody(createTaskBody), async (req, res) => {
-    const body = req.body as z.infer<typeof createTaskBody>;
+taskRouter.post('/', idempotency(), validateBody(parseCreateTaskBody), async (req, res) => {
+    const body = req.body as CreateTaskBody;
     const userId = new mongoose.Types.ObjectId(req.user!.sub);
     await assertProjectRole(userId, body.projectId, 'contributor');
 
@@ -160,7 +219,7 @@ taskRouter.post('/', idempotency(), validateBody(createTaskBody), async (req, re
         priority: body.priority ?? 3,
         assigneeUserId: body.assigneeUserId ? new mongoose.Types.ObjectId(body.assigneeUserId) : undefined,
         createdByUserId: userId,
-        dueAt: body.dueAt ? new Date(body.dueAt) : undefined
+        dueAt: body.dueAt ?? undefined
     });
 
     writeAudit(req, {
@@ -195,13 +254,13 @@ taskRouter.get('/:taskId', async (req, res) => {
     });
 });
 
-taskRouter.patch('/:taskId', idempotency(), validateBody(updateTaskBody), async (req, res) => {
+taskRouter.patch('/:taskId', idempotency(), validateBody(parseUpdateTaskBody), async (req, res) => {
     const task = await TaskModel.findById(req.params.taskId);
     if (!task) throw createHttpError(404, 'task_not_found');
     const userId = new mongoose.Types.ObjectId(req.user!.sub);
     await assertProjectRole(userId, String(task.projectId), 'contributor');
 
-    const patch = req.body as z.infer<typeof updateTaskBody>;
+    const patch = req.body as UpdateTaskBody;
     const update: any = {};
     if (patch.title !== undefined) update.title = patch.title;
     if (patch.description !== undefined) update.description = patch.description;
@@ -210,7 +269,7 @@ taskRouter.patch('/:taskId', idempotency(), validateBody(updateTaskBody), async 
     if (patch.assigneeUserId !== undefined) {
         update.assigneeUserId = patch.assigneeUserId ? new mongoose.Types.ObjectId(patch.assigneeUserId) : undefined;
     }
-    if (patch.dueAt !== undefined) update.dueAt = patch.dueAt ? new Date(patch.dueAt) : undefined;
+    if (patch.dueAt !== undefined) update.dueAt = patch.dueAt ? patch.dueAt : undefined;
     if (patch.boardId !== undefined) update.boardId = new mongoose.Types.ObjectId(patch.boardId);
 
     await TaskModel.updateOne({ _id: task._id }, { $set: update });
@@ -241,13 +300,13 @@ taskRouter.get('/:taskId/comments', async (req, res) => {
     });
 });
 
-taskRouter.post('/:taskId/comments', idempotency(), validateBody(createCommentBody), async (req, res) => {
+taskRouter.post('/:taskId/comments', idempotency(), validateBody(parseCreateCommentBody), async (req, res) => {
     const task = await TaskModel.findById(req.params.taskId);
     if (!task) throw createHttpError(404, 'task_not_found');
     const userId = new mongoose.Types.ObjectId(req.user!.sub);
     await assertProjectRole(userId, String(task.projectId), 'contributor');
 
-    const body = req.body as z.infer<typeof createCommentBody>;
+    const body = req.body as CreateCommentBody;
     const comment = await TaskCommentModel.create({
         orgId: task.orgId,
         workspaceId: task.workspaceId,
@@ -280,14 +339,14 @@ taskRouter.get('/projects/:projectId/labels', async (req, res) => {
     });
 });
 
-taskRouter.post('/projects/:projectId/labels', idempotency(), validateBody(createLabelBody), async (req, res) => {
+taskRouter.post('/projects/:projectId/labels', idempotency(), validateBody(parseCreateLabelBody), async (req, res) => {
     const userId = new mongoose.Types.ObjectId(req.user!.sub);
     await assertProjectRole(userId, req.params.projectId, 'maintainer');
 
     const project = await ProjectModel.findById(req.params.projectId);
     if (!project) throw createHttpError(404, 'project_not_found');
 
-    const body = req.body as z.infer<typeof createLabelBody>;
+    const body = req.body as CreateLabelBody;
     const label = await LabelModel.create({
         orgId: project.orgId,
         projectId: project._id,
@@ -324,13 +383,13 @@ taskRouter.get('/:taskId/labels', async (req, res) => {
     });
 });
 
-taskRouter.post('/:taskId/labels', idempotency(), validateBody(attachLabelBody), async (req, res) => {
+taskRouter.post('/:taskId/labels', idempotency(), validateBody(parseAttachLabelBody), async (req, res) => {
     const task = await TaskModel.findById(req.params.taskId);
     if (!task) throw createHttpError(404, 'task_not_found');
     const userId = new mongoose.Types.ObjectId(req.user!.sub);
     await assertProjectRole(userId, String(task.projectId), 'contributor');
 
-    const { labelId } = req.body as z.infer<typeof attachLabelBody>;
+    const { labelId } = req.body as AttachLabelBody;
     const label = await LabelModel.findOne({ _id: new mongoose.Types.ObjectId(labelId), projectId: task.projectId });
     if (!label) throw createHttpError(404, 'label_not_found');
 

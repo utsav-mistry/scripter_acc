@@ -1,10 +1,12 @@
 import createHttpError from '../lib/httpError.js';
-export function validateBody(schema) {
+export function validateBody(validator) {
     return (req, _res, next) => {
-        const parsed = schema.safeParse(req.body);
-        if (!parsed.success)
-            return next(createHttpError(400, 'invalid_body'));
-        req.body = parsed.data;
+        try {
+            req.body = validator(req.body);
+        }
+        catch (err) {
+            return next(err ?? createHttpError(400, 'invalid_body'));
+        }
         next();
     };
 }
