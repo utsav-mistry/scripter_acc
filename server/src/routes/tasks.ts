@@ -21,6 +21,7 @@ import { AttachmentModel } from '../schemas/attachment.js';
 import { writeAudit } from '../lib/audit.js';
 import { sha256Base64 } from '../lib/hash.js';
 import { ensureDir, taskAttachmentDir } from '../lib/storage.js';
+import { parseMultipartFormData } from '../lib/multipart.js';
 
 export const taskRouter = Router();
 
@@ -387,56 +388,83 @@ taskRouter.get('/:taskId/attachments', async (req, res) => {
     });
 });
 
-taskRouter.post(
-    '/:taskId/attachments',
-    idempotency(),
-    express.raw({ type: 'application/octet-stream', limit: '25mb' }),
-    async (req, res) => {
-        const task = await TaskModel.findById(req.params.taskId);
-        if (!task) throw createHttpError(404, 'task_not_found');
-        const userId = new mongoose.Types.ObjectId(req.user!.sub);
-        await assertProjectRole(userId, String(task.projectId), 'contributor');
+taskRouter.post('/:taskId/attachments', idempotency(), async (req, res) => {
+    const task = await TaskModel.findById(req.params.taskId);
+    if (!task) throw createHttpError(404, 'task_not_found');
+    const userId = new mongoose.Types.ObjectId(req.user!.sub);
+    await assertProjectRole(userId, String(task.projectId), 'contributor');
 
-        const filename = req.header('x-filename');
+    const contentTypeHeader = req.header('content-type') ?? 'application/octet-stream';
+    let filename: string | null = null;
+    let contentType: string = 'application/octet-stream';
+    let buf: Buffer | null = null;
+
+    const raw = await new Promise<Buffer>((resolve, reject) => {
+        const chunks: Buffer[] = [];
+        let size = 0;
+        req.on('data', (chunk) => {
+            const b = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk);
+            size += b.length;
+            if (size > 25 * 1024 * 1024) {
+                reject(createHttpError(413, 'payload_too_large'));
+                req.destroy();
+                return;
+            }
+            chunks.push(b);
+        });
+        req.on('end', () => resolve(Buffer.concat(chunks)));
+        req.on('error', reject);
+    });
+
+    if (contentTypeHeader.toLowerCase().startsWith('multipart/form-data')) {
+        const parsed = parseMultipartFormData({ contentTypeHeader, body: raw, maxFiles: 1 });
+        const file = parsed.files.find((f) => f.fieldName === 'file') ?? parsed.files[0];
+        if (!file) throw createHttpError(400, 'missing_file');
+        filename = file.filename;
+        contentType = file.contentType || 'application/octet-stream';
+        buf = file.data;
+    } else {
+        filename = req.header('x-filename') ?? null;
         if (!filename) throw createHttpError(400, 'missing_x_filename');
-
-        const contentType = req.header('content-type') ?? 'application/octet-stream';
-        const buf = req.body as Buffer;
-        if (!Buffer.isBuffer(buf) || buf.length === 0) throw createHttpError(400, 'empty_body');
-
-        const sha = sha256Base64(buf.toString('base64'));
-        const dir = taskAttachmentDir(String(task._id));
-        await ensureDir(dir);
-        const safeName = filename.replace(/[^a-zA-Z0-9._-]+/g, '_').slice(0, 180);
-        const storagePath = path.join(dir, `${Date.now()}_${safeName}`);
-        await fs.writeFile(storagePath, buf);
-
-        const attachment = await AttachmentModel.create({
-            orgId: task.orgId,
-            workspaceId: task.workspaceId,
-            projectId: task.projectId,
-            taskId: task._id,
-            filename: safeName,
-            contentType,
-            sizeBytes: buf.length,
-            storagePath,
-            sha256: sha,
-            createdByUserId: userId
-        });
-
-        writeAudit(req, {
-            entityType: 'attachment',
-            entityId: String(attachment._id),
-            action: 'upload',
-            orgId: String(task.orgId),
-            workspaceId: String(task.workspaceId),
-            projectId: String(task.projectId),
-            metadata: { taskId: String(task._id), filename: safeName, sizeBytes: buf.length }
-        });
-
-        res.status(201).json({ id: attachment._id, filename: attachment.filename, sizeBytes: attachment.sizeBytes });
+        contentType = contentTypeHeader;
+        buf = raw;
     }
-);
+
+    if (!filename) throw createHttpError(400, 'missing_filename');
+    if (!buf || buf.length === 0) throw createHttpError(400, 'empty_body');
+
+    const sha = sha256Base64(buf.toString('base64'));
+    const dir = taskAttachmentDir(String(task._id));
+    await ensureDir(dir);
+    const safeName = filename.replace(/[^a-zA-Z0-9._-]+/g, '_').slice(0, 180);
+    const storagePath = path.join(dir, `${Date.now()}_${safeName}`);
+    await fs.writeFile(storagePath, buf);
+
+    const attachment = await AttachmentModel.create({
+        orgId: task.orgId,
+        workspaceId: task.workspaceId,
+        projectId: task.projectId,
+        taskId: task._id,
+        filename: safeName,
+        contentType,
+        sizeBytes: buf.length,
+        storagePath,
+        sha256: sha,
+        createdByUserId: userId
+    });
+
+    writeAudit(req, {
+        entityType: 'attachment',
+        entityId: String(attachment._id),
+        action: 'upload',
+        orgId: String(task.orgId),
+        workspaceId: String(task.workspaceId),
+        projectId: String(task.projectId),
+        metadata: { taskId: String(task._id), filename: safeName, sizeBytes: buf.length }
+    });
+
+    res.status(201).json({ id: attachment._id, filename: attachment.filename, sizeBytes: attachment.sizeBytes });
+});
 
 taskRouter.get('/:taskId/attachments/:attachmentId/download', async (req, res) => {
     const task = await TaskModel.findById(req.params.taskId);

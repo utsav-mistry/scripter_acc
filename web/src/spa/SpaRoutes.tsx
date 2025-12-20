@@ -4,6 +4,8 @@ import { HomePage } from '../pages/HomePage';
 import { AuthPage } from '../pages/AuthPage';
 import { OrgsPage } from '../pages/OrgsPage';
 import { OrgDetailPage } from '../pages/OrgDetailPage';
+import { ProjectKanbanPage } from '../pages/ProjectKanbanPage';
+import { AuditPage } from '../pages/AuditPage';
 import { AuthGate } from '../components/auth/AuthGate';
 
 export function SpaRoutes() {
@@ -25,6 +27,24 @@ export function SpaRoutes() {
                 element={
                     <AuthGate>
                         <OrgDetailPage />
+                    </AuthGate>
+                }
+            />
+
+            <Route
+                path="/projects/:projectId/kanban"
+                element={
+                    <AuthGate>
+                        <ProjectKanbanPage />
+                    </AuthGate>
+                }
+            />
+
+            <Route
+                path="/audit"
+                element={
+                    <AuthGate>
+                        <AuditPage />
                     </AuthGate>
                 }
             />
