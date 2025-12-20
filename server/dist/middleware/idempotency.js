@@ -1,4 +1,4 @@
-import createHttpError from 'http-errors';
+import createHttpError from '../lib/httpError.js';
 import mongoose from 'mongoose';
 import { IdempotencyKeyModel } from '../schemas/idempotencyKey.js';
 import { sha256Base64 } from '../lib/hash.js';

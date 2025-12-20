@@ -1,4 +1,4 @@
-import createHttpError from 'http-errors';
+import createHttpError from '../lib/httpError.js';
 export function validateBody(schema) {
     return (req, _res, next) => {
         const parsed = schema.safeParse(req.body);

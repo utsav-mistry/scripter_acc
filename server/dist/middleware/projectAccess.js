@@ -1,4 +1,4 @@
-import createHttpError from 'http-errors';
+import createHttpError from '../lib/httpError.js';
 import mongoose from 'mongoose';
 import { ProjectMemberModel } from '../schemas/projectMember.js';
 import { projectRoleAtLeast } from '../lib/projectRbac.js';

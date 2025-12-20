@@ -1,5 +1,5 @@
 import { Router } from 'express';
-import createHttpError from 'http-errors';
+import createHttpError from '../lib/httpError.js';
 import mongoose from 'mongoose';
 import { z } from 'zod';
 import { requireAuth } from '../middleware/auth.js';

@@ -1,4 +1,4 @@
-import createHttpError from 'http-errors';
+import createHttpError from '../lib/httpError.js';
 import mongoose from 'mongoose';
 import { OrgMemberModel } from '../schemas/orgMember.js';
 const roleWeight = {

@@ -1,5 +1,5 @@
 import { Router } from 'express';
-import createHttpError from 'http-errors';
+import createHttpError from '../lib/httpError.js';
 import { z } from 'zod';
 import mongoose from 'mongoose';
 

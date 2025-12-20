@@ -1,4 +1,4 @@
-import createHttpError from 'http-errors';
+import createHttpError from './httpError.js';
 
 export type MultipartFilePart = {
     fieldName: string;

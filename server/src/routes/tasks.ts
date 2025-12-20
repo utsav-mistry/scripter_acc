@@ -1,6 +1,6 @@
 import { Router } from 'express';
 import express from 'express';
-import createHttpError from 'http-errors';
+import createHttpError from '../lib/httpError.js';
 import mongoose from 'mongoose';
 import fs from 'node:fs/promises';
 import path from 'node:path';
