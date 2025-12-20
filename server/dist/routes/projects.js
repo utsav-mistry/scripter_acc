@@ -1,7 +1,6 @@
 import { Router } from 'express';
 import createHttpError from 'http-errors';
 import mongoose from 'mongoose';
-import { nanoid } from 'nanoid';
 import { z } from 'zod';
 import { requireAuth } from '../middleware/auth.js';
 import { requireProjectRole } from '../middleware/projectAccess.js';
@@ -11,6 +10,7 @@ import { ProjectModel } from '../schemas/project.js';
 import { WorkspaceModel } from '../schemas/workspace.js';
 import { ProjectMemberModel } from '../schemas/projectMember.js';
 import { OrgMemberModel } from '../schemas/orgMember.js';
+import { randomId } from '../lib/id.js';
 export const projectRouter = Router();
 const createProjectBody = z.object({
     orgId: z.string().min(1),
@@ -80,7 +80,7 @@ projectRouter.post('/', idempotency(), validateBody(createProjectBody), async (r
     const { orgId, workspaceId, name, description, visibility } = req.body;
     const requestedKey = req.body.key;
     const keyBase = requestedKey ? requestedKey : projectKeyFromName(name);
-    const key = keyBase.length >= 2 ? keyBase : `PRJ${nanoid(6).toUpperCase()}`;
+    const key = keyBase.length >= 2 ? keyBase : `PRJ${randomId(3).toUpperCase()}`;
     const userId = new mongoose.Types.ObjectId(req.user.sub);
     await assertOrgRole(userId, orgId, 'member');
     const ws = await WorkspaceModel.findOne({

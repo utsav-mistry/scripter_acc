@@ -1,7 +1,6 @@
 import { useMemo, useState } from 'react';
 import { useParams } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
-import { nanoid } from 'nanoid';
 
 import { useAuth } from '../state/auth/AuthContext';
 import { listWorkspaces, createWorkspace } from '../api/orgs';
@@ -11,6 +10,7 @@ import { Stack } from '../layout/Stack';
 import { Card } from '../atoms/surface/Card';
 import { ButtonPrimary } from '../atoms/buttons/ButtonPrimary';
 import { WorkspaceList } from '../components/workspaces/WorkspaceList';
+import { randomId } from '../lib/id';
 
 export function OrgDetailPage() {
     const { orgId } = useParams();
@@ -39,13 +39,13 @@ export function OrgDetailPage() {
     );
 
     async function createWsQuick() {
-        await createWorkspace(accessToken, orgId!, { name: `Workspace ${new Date().toISOString()}` }, nanoid());
+        await createWorkspace(accessToken, orgId!, { name: `Workspace ${new Date().toISOString()}` }, randomId(12));
         await wq.refetch();
     }
 
     async function createProjectQuick() {
         if (!selectedWorkspaceId) return;
-        await createProject(accessToken, { orgId: orgId!, workspaceId: selectedWorkspaceId, name: `Project ${new Date().toISOString()}` }, nanoid());
+        await createProject(accessToken, { orgId: orgId!, workspaceId: selectedWorkspaceId, name: `Project ${new Date().toISOString()}` }, randomId(12));
         await pq.refetch();
     }
 

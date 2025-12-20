@@ -1,7 +1,6 @@
 import { useMemo, useState } from 'react';
 import { useParams } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
-import { nanoid } from 'nanoid';
 
 import { useAuth } from '../state/auth/AuthContext';
 import { listBoards, createBoard } from '../api/boards';
@@ -14,6 +13,7 @@ import { Loader } from '../atoms/feedback/Loader';
 import { EmptyState } from '../atoms/feedback/EmptyState';
 import { KanbanColumn } from '../components/kanban/KanbanColumn';
 import { TaskDetailPanel } from '../components/kanban/TaskDetailPanel';
+import { randomId } from '../lib/id';
 
 const STATUSES = [
     { key: 'todo', title: 'To do' },
@@ -59,13 +59,13 @@ export function ProjectKanbanPage() {
     }, [tasks]);
 
     async function createBoardQuick() {
-        await createBoard(accessToken, projectId!, { name: `Board ${new Date().toISOString()}` }, nanoid());
+        await createBoard(accessToken, projectId!, { name: `Board ${new Date().toISOString()}` }, randomId(12));
         await bq.refetch();
     }
 
     async function createTaskQuick() {
         if (!selectedBoardId) return;
-        await createTask(accessToken, { projectId: projectId!, boardId: selectedBoardId, title: `Task ${new Date().toISOString()}` }, nanoid());
+        await createTask(accessToken, { projectId: projectId!, boardId: selectedBoardId, title: `Task ${new Date().toISOString()}` }, randomId(12));
         await tq.refetch();
     }
 

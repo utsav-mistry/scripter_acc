@@ -3,9 +3,9 @@ import cookieParser from 'cookie-parser';
 import cors from 'cors';
 import helmet from 'helmet';
 import compression from 'compression';
-import morgan from 'morgan';
 import { env } from './lib/env.js';
 import { requestIdMiddleware } from './middleware/requestId.js';
+import { requestLogger } from './middleware/requestLogger.js';
 import { notFoundHandler } from './middleware/notFound.js';
 import { errorHandler } from './middleware/errorHandler.js';
 import { globalRateLimiter } from './middleware/rateLimit.js';
@@ -26,8 +26,8 @@ export function createServer() {
         credentials: true
     }));
     app.use(compression());
-    app.use(morgan(env.MORGAN_FORMAT));
     app.use(requestIdMiddleware());
+    app.use(requestLogger());
     app.use(globalRateLimiter());
     app.use(express.json({ limit: '2mb' }));
     app.use(cookieParser());

@@ -1,5 +1,4 @@
 import { useQuery } from '@tanstack/react-query';
-import { nanoid } from 'nanoid';
 import { useState } from 'react';
 
 import { listComments, createComment, listTaskLabels, listAttachments, uploadAttachment, downloadAttachmentUrl } from '../../api/tasks';
@@ -8,6 +7,7 @@ import { Stack } from '../../layout/Stack';
 import { TextInput } from '../../atoms/inputs/TextInput';
 import { ButtonPrimary } from '../../atoms/buttons/ButtonPrimary';
 import { MutedText } from '../../atoms/text/MutedText';
+import { randomId } from '../../lib/id';
 
 export function TaskDetailPanel(props: { accessToken: string; taskId: string }) {
     const [comment, setComment] = useState('');
@@ -29,13 +29,13 @@ export function TaskDetailPanel(props: { accessToken: string; taskId: string }) 
 
     async function postComment() {
         if (!comment.trim()) return;
-        await createComment(props.accessToken, props.taskId, comment, nanoid());
+        await createComment(props.accessToken, props.taskId, comment, randomId(12));
         setComment('');
         await cq.refetch();
     }
 
     async function onPickFile(file: File) {
-        await uploadAttachment(props.accessToken, props.taskId, file, nanoid());
+        await uploadAttachment(props.accessToken, props.taskId, file, randomId(12));
         await aq.refetch();
     }
 
