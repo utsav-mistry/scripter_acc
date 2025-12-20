@@ -5,7 +5,6 @@ import { nanoid } from 'nanoid';
 import { z } from 'zod';
 
 import { requireAuth } from '../middleware/auth.js';
-import { requireOrgRole } from '../middleware/orgAccess.js';
 import { requireProjectRole } from '../middleware/projectAccess.js';
 import { idempotency } from '../middleware/idempotency.js';
 import { validateBody } from '../middleware/validate.js';
@@ -13,6 +12,7 @@ import { validateBody } from '../middleware/validate.js';
 import { ProjectModel } from '../schemas/project.js';
 import { WorkspaceModel } from '../schemas/workspace.js';
 import { ProjectMemberModel } from '../schemas/projectMember.js';
+import { OrgMemberModel, type OrgRole } from '../schemas/orgMember.js';
 
 export const projectRouter = Router();
 
@@ -50,6 +50,23 @@ function projectKeyFromName(name: string) {
     return base.slice(0, 10);
 }
 
+const orgRoleWeight: Record<OrgRole, number> = {
+    owner: 4,
+    admin: 3,
+    member: 2,
+    viewer: 1
+};
+
+async function assertOrgRole(userId: mongoose.Types.ObjectId, orgId: string, minRole: OrgRole) {
+    const member = await OrgMemberModel.findOne({
+        orgId: new mongoose.Types.ObjectId(String(orgId)),
+        userId,
+        status: 'active'
+    });
+    if (!member) throw createHttpError(403, 'forbidden');
+    if (orgRoleWeight[member.role] < orgRoleWeight[minRole]) throw createHttpError(403, 'forbidden');
+}
+
 projectRouter.use(requireAuth());
 
 projectRouter.get('/', async (req, res) => {
@@ -57,10 +74,8 @@ projectRouter.get('/', async (req, res) => {
     if (!parsed.success) throw createHttpError(400, 'missing_orgId');
     const { orgId, workspaceId } = parsed.data;
 
-    req.params.orgId = String(orgId);
-    await new Promise<void>((resolve, reject) =>
-        requireOrgRole('viewer')(req, res, (err) => (err ? reject(err) : resolve()))
-    );
+    const userId = new mongoose.Types.ObjectId(req.user!.sub);
+    await assertOrgRole(userId, orgId, 'viewer');
 
     const items = await ProjectModel.find({
         orgId: new mongoose.Types.ObjectId(String(orgId)),
@@ -79,10 +94,8 @@ projectRouter.post('/', idempotency(), validateBody(createProjectBody), async (r
     const keyBase = requestedKey ? requestedKey : projectKeyFromName(name);
     const key = keyBase.length >= 2 ? keyBase : `PRJ${nanoid(6).toUpperCase()}`;
 
-    req.params.orgId = String(orgId);
-    await new Promise<void>((resolve, reject) =>
-        requireOrgRole('member')(req, res, (err) => (err ? reject(err) : resolve()))
-    );
+    const userId = new mongoose.Types.ObjectId(req.user!.sub);
+    await assertOrgRole(userId, orgId, 'member');
 
     const ws = await WorkspaceModel.findOne({
         _id: new mongoose.Types.ObjectId(String(workspaceId)),
@@ -90,7 +103,6 @@ projectRouter.post('/', idempotency(), validateBody(createProjectBody), async (r
     });
     if (!ws) throw createHttpError(404, 'workspace_not_found');
 
-    const userId = new mongoose.Types.ObjectId(req.user!.sub);
     const project = await ProjectModel.create({
         orgId: new mongoose.Types.ObjectId(String(orgId)),
         workspaceId: new mongoose.Types.ObjectId(String(workspaceId)),
