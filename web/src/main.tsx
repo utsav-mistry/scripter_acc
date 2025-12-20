@@ -1,17 +1,15 @@
 import React from 'react';
 import ReactDOM from 'react-dom/client';
-import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { BrowserRouter } from 'react-router-dom';
-import { App } from './ui/App.js';
-
-const queryClient = new QueryClient();
+import { Providers } from './spa/Providers.js';
+import { RootApp } from './spa/RootApp.js';
 
 ReactDOM.createRoot(document.getElementById('root')!).render(
     <React.StrictMode>
-        <QueryClientProvider client={queryClient}>
+        <Providers>
             <BrowserRouter>
-                <App />
+                <RootApp />
             </BrowserRouter>
-        </QueryClientProvider>
+        </Providers>
     </React.StrictMode>
 );
